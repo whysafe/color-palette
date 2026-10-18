@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Палитра — генератор цветовых схем</title>
+<link href="https://fonts.googleapis.com/css2?family=Jost:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{font-family:Jost,system-ui,sans-serif;display:grid;grid-template-rows:auto 1fr;background:#fff;color:#1b1b1b}
+.bar{display:flex;align-items:center;gap:18px;padding:12px 20px;border-bottom:1px solid #eee;flex-wrap:wrap}
+.logo{font-weight:700;font-size:20px;letter-spacing:-.02em}
+.logo i{display:inline-block;width:12px;height:12px;border-radius:50%;margin-left:2px;background:conic-gradient(#f55,#fd5,#5d8,#59f,#c6f,#f55)}
+.hint{color:#888;font-size:14px}
+select,button{font:500 14px Jost,sans-serif;border:1px solid #ddd;background:#fff;border-radius:8px;padding:7px 12px;cursor:pointer;color:inherit}
+button.main{background:#1b1b1b;color:#fff;border-color:#1b1b1b}
+.sp{flex:1}
+.cols{display:flex;min-height:0}
+.col{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;padding:0 8px 6vh;position:relative;transition:flex .2s}
+.col:hover{flex:1.25}
+.hex{font:700 clamp(18px,2.4vw,30px)/1 Jost;letter-spacing:.03em;text-transform:uppercase;background:none;border:0;color:inherit;cursor:pointer;padding:6px}
+.name{font-size:13px;opacity:.75;margin:4px 0 14px}
+.tools{display:flex;gap:6px;opacity:0;transition:opacity .15s}
+.col:hover .tools,.col:focus-within .tools,.col.locked .tools{opacity:1}
+.tools button{background:transparent;border:0;color:inherit;font-size:18px;width:38px;height:38px;border-radius:8px}
+.tools button:hover{background:rgba(127,127,127,.18)}
+.contrast{position:absolute;top:18px;left:0;right:0;display:flex;justify-content:center;gap:10px;font-size:12px;opacity:.85}
+.contrast span{padding:2px 7px;border-radius:5px}
+.shades{display:flex;width:70%;max-width:180px;height:10px;border-radius:5px;overflow:hidden;margin-bottom:18px}
+.shades i{flex:1}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#1b1b1b;color:#fff;padding:8px 16px;border-radius:8px;opacity:0;transition:.2s;pointer-events:none}
+.toast.on{opacity:1}
+dialog{border:0;border-radius:14px;padding:22px;width:min(520px,92vw)}
+dialog pre{background:#f5f5f5;padding:12px;border-radius:8px;overflow:auto;font-size:13px}
+@media(max-width:700px){.cols{flex-direction:column}.col{flex-direction:row;justify-content:space-between;padding:0 16px}.col:hover{flex:1}.tools{opacity:1}.contrast,.shades{display:none}.name{display:none}}
+</style>
+</head>
+<body>
+<div class="bar">
+  <span class="logo">палитра<i></i></span>
+  <span class="hint">Пробел — новая схема. Кликните по коду цвета, чтобы скопировать.</span>
+  <span class="sp"></span>
+  <label>Схема <select id="mode">
+    <option value="random">случайная гармония</option><option value="analog">аналоговая</option><option value="mono">монохромная</option>
+    <option value="complement">комплементарная</option><option value="triad">триада</option><option value="pastel">пастель</option></select></label>
+  <button id="export">Экспорт CSS</button>
+  <button class="main" id="gen">Сгенерировать</button>
+</div>
+<main class="cols" id="cols"></main>
+<dialog id="dlg"><b>CSS-переменные</b><pre id="css"></pre><button id="copyCss" class="main">Копировать</button> <button onclick="dlg.close()">Закрыть</button></dialog>
+<div class="toast" id="toast"></div>
+<script>
+const NAMES = [[0,'красный'],[15,'алый'],[30,'оранжевый'],[45,'янтарный'],[58,'жёлтый'],[80,'салатовый'],[120,'зелёный'],[160,'изумрудный'],[180,'бирюзовый'],[200,'лазурный'],[225,'синий'],[255,'индиго'],[275,'фиолетовый'],[300,'пурпурный'],[330,'малиновый'],[350,'красный']]
+let colors = [], locked = [false, false, false, false, false]
+
+const rand = (a, b) => a + Math.random() * (b - a)
+function hsl2hex(h, s, l) {
+  s /= 100; l /= 100
+  const k = n => (n + h / 30) % 12, a = s * Math.min(l, 1 - l)
+  const f = n => Math.round(255 * (l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1)))).toString(16).padStart(2, '0')
+  return '#' + f(0) + f(8) + f(4)
+}
+function lum(hex) {
+  const c = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255).map(v => v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4)
+  return .2126 * c[0] + .7152 * c[1] + .0722 * c[2]
+}
+const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + .05) / (y + .05) }
+function describe({ h, s, l }) {
+  if (s < 12) return l > 85 ? 'почти белый' : l < 18 ? 'почти чёрный' : 'серый'
+  const base = NAMES.reduce((best, n) => Math.abs(n[0] - h) < Math.abs(best[0] - h) ? n : best)[1]
+  return (l > 72 ? 'светлый ' : l < 30 ? 'тёмный ' : s < 35 ? 'приглушённый ' : '') + base
+}
+
+function scheme(mode) {
+  const h = rand(0, 360), out = []
+  if (mode === 'random') mode = ['analog', 'mono', 'complement', 'triad', 'pastel'][Math.random() * 5 | 0]
+  for (let i = 0; i < 5; i++) {
+    let c
+    if (mode === 'analog') c = { h: h + (i - 2) * 22, s: rand(45, 75), l: 30 + i * 12 + rand(-4, 4) }
+    if (mode === 'mono') c = { h, s: rand(35, 70), l: 14 + i * 17 }
+    if (mode === 'complement') c = { h: i < 3 ? h : h + 180, s: rand(40, 80), l: [22, 45, 88, 55, 35][i] }
+    if (mode === 'triad') c = { h: h + [0, 120, 240, 0, 120][i], s: rand(45, 75), l: [30, 55, 60, 85, 20][i] }
+    if (mode === 'pastel') c = { h: h + i * 40, s: rand(55, 80), l: rand(78, 88) }
+    c.h = ((c.h % 360) + 360) % 360
+    out.push(c)
+  }
+  return out
+}
+
+function render() {
+  document.getElementById('cols').innerHTML = colors.map((c, i) => {
+    const hex = hsl2hex(c.h, c.s, c.l), white = ratio(hex, '#ffffff'), black = ratio(hex, '#000000')
+    const fg = white > black ? '#ffffff' : '#111111'
+    const shades = [-30, -15, 0, 15, 30].map(d => `<i style="background:${hsl2hex(c.h, c.s, Math.min(96, Math.max(4, c.l + d)))}"></i>`).join('')
+    return `<section class="col ${locked[i] ? 'locked' : ''}" style="background:${hex};color:${fg}">
+      <div class="contrast"><span title="Контраст с белым текстом">белый ${white.toFixed(1)} ${white >= 4.5 ? '✓' : ''}</span><span title="Контраст с чёрным текстом">чёрный ${black.toFixed(1)} ${black >= 4.5 ? '✓' : ''}</span></div>
+      <div class="shades">${shades}</div>
+      <div class="tools">
+        <button data-lock="${i}" aria-label="${locked[i] ? 'Разблокировать' : 'Зафиксировать'} цвет">${locked[i] ? '🔒' : '🔓'}</button>
+        <button data-left="${i}" aria-label="Сдвинуть влево">←</button><button data-right="${i}" aria-label="Сдвинуть вправо">→</button>
+      </div>
+      <button class="hex" data-copy="${hex}">${hex.slice(1)}</button>
+      <span class="name">${describe(c)}</span>
+    </section>`
+  }).join('')
+  history.replaceState(null, '', '#' + colors.map(c => hsl2hex(c.h, c.s, c.l).slice(1)).join('-'))
+}
+
+function generate() {
+  const next = scheme(document.getElementById('mode').value)
+  colors = colors.length ? colors.map((c, i) => locked[i] ? c : next[i]) : next
+  render()
+}
+
+function hex2hsl(hex) {
+  let [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255)
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2, d = max - min
+  let h = 0, s = 0
+  if (d) {
+    s = d / (1 - Math.abs(2 * l - 1))
+    h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4
+    h *= 60
+  }
+  return { h: (h + 360) % 360, s: s * 100, l: l * 100 }
+}
+
+function toast(t) { const el = document.getElementById('toast'); el.textContent = t; el.classList.add('on'); clearTimeout(toast.id); toast.id = setTimeout(() => el.classList.remove('on'), 1300) }
+async function copy(text, msg) { try { await navigator.clipboard.writeText(text); toast(msg) } catch { toast(text) } }
+
+document.getElementById('cols').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return
+  if (b.dataset.copy) copy(b.dataset.copy, b.dataset.copy + ' скопирован')
+  if (b.dataset.lock) { const i = +b.dataset.lock; locked[i] = !locked[i]; render() }
+  const move = (i, j) => { if (j < 0 || j > 4) return; [colors[i], colors[j]] = [colors[j], colors[i]]; [locked[i], locked[j]] = [locked[j], locked[i]]; render() }
+  if (b.dataset.left) move(+b.dataset.left, +b.dataset.left - 1)
+  if (b.dataset.right) move(+b.dataset.right, +b.dataset.right + 1)
+})
+document.getElementById('gen').onclick = generate
+document.getElementById('export').onclick = () => {
+  document.getElementById('css').textContent = ':root {\n' + colors.map((c, i) => `  --color-${i + 1}: ${hsl2hex(c.h, c.s, c.l)};`).join('\n') + '\n}'
+  dlg.showModal()
+}
+document.getElementById('copyCss').onclick = () => copy(document.getElementById('css').textContent, 'CSS скопирован')
+addEventListener('keydown', e => { if (e.code === 'Space' && !dlg.open && e.target.tagName !== 'SELECT') { e.preventDefault(); generate() } })
+
+const fromHash = location.hash.slice(1).split('-').filter(h => /^[0-9a-f]{6}$/i.test(h))
+if (fromHash.length === 5) { colors = fromHash.map(h => hex2hsl('#' + h)); render() } else generate()
+</script>
+</body>
+</html>
